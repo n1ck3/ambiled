@@ -1,24 +1,27 @@
-import pyscreenshot as ImageGrab
 import time
+import pyscreenshot as ImageGrab
+from PIL import Image, ImageFilter
 
-TOP = [
-    "t0", "t1", "t2", "t3", "t4", "t5",
-    "t6", "t7", "t8", "t9", "t10", "t11",
-]
-RIGHT = [
-    "r0", "r1", "r2", "r3", "r4", "r5",
-    "r6", "r7", "r8"
-]
-BOTTOM = [
-    "b0", "b1", "b2", "b3", "b4", "b5",
-    "b6", "b7", "b8", "b9", "b10", "b11",
-]
-LEFT = [
-    "l0", "l1", "l2", "l3", "l4", "l5",
-    "l6", "l7", "l8"
-]
+LEDS = {
+    "TOP": [
+        "t0", "t1", "t2", "t3", "t4", "t5",
+        "t6", "t7", "t8", "t9", "t10", "t11",
+    ],
+    "RIGHT": [
+        "r0", "r1", "r2", "r3", "r4", "r5",
+        "r6", "r7", "r8"
+    ],
+    "BOTTOM": [
+        "b0", "b1", "b2", "b3", "b4", "b5",
+        "b6", "b7", "b8", "b9", "b10", "b11",
+    ],
+    "LEFT": [
+        "l0", "l1", "l2", "l3", "l4", "l5",
+        "l6", "l7", "l8"
+    ]
+}
 
-TICK = 200/1000  # Milliseconds
+TICK = 500/1000  # Milliseconds
 
 
 class AmbiLed():
@@ -27,77 +30,50 @@ class AmbiLed():
     """
     def __init__(self):
         """
-        This method makes sure we save some constants, like the screen width
-        and height.
+        This method makes sure we save some constants.
         """
-        self.width, self.height = self.get_current_screen().size
-        self.sides = {
-            "TOP": {
-                "length": self.width,
-                "num_leds": len(TOP),
-                "step_x": int(self.width / len(TOP)),
-                "step_y": 0,
-                "leds": [[key, None] for key in TOP]
-            },
-            "RIGHT": {
-                "length": self.height,
-                "num_leds": len(RIGHT),
-                "step_x": 0,
-                "step_y": int(self.height / len(RIGHT)),
-                "leds": [[key, None] for key in RIGHT]
-            },
-            "BOTTOM": {
-                "length": self.width,
-                "num_leds": len(BOTTOM),
-                "step_x": int(self.width / len(BOTTOM)),
-                "step_y": 0,
-                "leds": [[key, None] for key in BOTTOM]
-            },
-            "LEFT": {
-                "length": self.height,
-                "num_leds": len(LEFT),
-                "step_x": 0,
-                "step_y": int(self.height / len(LEFT)),
-                "leds": [[key, None] for key in LEFT]
-            }
+        self.width = len(LEDS["TOP"])
+        self.height = len(LEDS["RIGHT"])
+        self.leds = {
+            side: [[led, None] for led in LEDS[side]] for side in LEDS.keys()
         }
-        self.get_colors_for_leds()
 
     def get_current_screen(self):
         return ImageGrab.grab()
 
     def get_colors_for_leds(self):
-        screen = self.get_current_screen().load()
-        for name, side in self.sides.items():
-            x_pos = y_pos = 0
-            idx = 0
-            while idx < side["num_leds"]:
-                led, color = side["leds"][idx]
-                self.sides[name]["leds"][idx][1] = screen[x_pos, y_pos]
-                x_pos += side["step_x"]
-                y_pos += side["step_y"]
+        screen = self.get_current_screen()
+        screen = screen.resize((self.width, self.height), Image.NEAREST)
+        screen = screen.filter(ImageFilter.BLUR)
+        screen = screen.load()
+
+        for side, leds in self.leds.items():
+            x_pos = y_pos = idx = 0
+            while idx < len(leds):
+                self.leds[side][idx][1] = screen[x_pos, y_pos]
+                if side in ["TOP", "BOTTOM"]:
+                    x_pos += 1
+                else:
+                    y_pos += 1
                 idx += 1
 
-    def print_colors_for_leds(self):
-        print(self.sides)
+    def run(self):
+        try:
+            idx = 0
+            while True:
+                idx += 1
+                start = time.clock()
+                self.get_colors_for_leds()
+                print(self.leds)
+                print("#%s took %1.3f seconds\n" % (idx, (time.clock()-start)))
+                time.sleep(TICK)
+        except (KeyboardInterrupt, SystemExit):
+            raise
 
 
 def __main__():
     ambiled = AmbiLed()
-    try:
-        idx = 0
-        while True:
-            start = time.clock()
-            ambiled.get_colors_for_leds()
-            ambiled.print_colors_for_leds()
-            idx += 1
-
-            print("Run: %s took %1.3f seconds" % (idx, (time.clock()-start)))
-            print()
-
-            time.sleep(TICK)
-    except (KeyboardInterrupt, SystemExit):
-        raise
+    ambiled.run()
 
 if __name__ == __main__():
     __main__()
