@@ -5,16 +5,12 @@ Ambiled is a python app that is allows WS2811 and WS2812 RGB LED strips mounted 
 
 ![Ambilight](http://upload.wikimedia.org/wikipedia/commons/3/39/Ambilight-2.jpg "Ambilight")
 
----
-
 # What do you need?
 
 1. A computer outputting its graphics to a TV
 1. Python 3
 1. WS2811 and WS2812 RGB LED Strips (with appropriate power supply)
 1. A microcontroller that can drive the LED strips
-
----
 
 # How does it work:
 
