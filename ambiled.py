@@ -76,6 +76,12 @@ class AmbiLED():
                 else:
                     y_pos += 1
 
+    def update_led_strips(self):
+        """
+        Sends the color arrays to the LED strips.
+        """
+        pass
+
     def run(self):
         """
         This will be the main loop of the program. When this method is called,
