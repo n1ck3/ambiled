@@ -37,3 +37,6 @@ nosetests.xml
 
 # Virtualenv
 include
+
+# Project specific
+tmp

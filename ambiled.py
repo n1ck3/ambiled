@@ -3,90 +3,78 @@
 __author__ = "Niclas Helbro <niclas.helbro@gmail.com>"
 __version__ = "AmbiLED 0.1"
 
+import sys
+import shutil
+import os
 import argparse
 import time
 import logging
 import pyscreenshot as ImageGrab
-from PIL import Image, ImageFilter
 
-LEDS = {
-    "TOP": [
-        "t0", "t1", "t2", "t3", "t4", "t5",
-        "t6", "t7", "t8", "t9", "t10", "t11",
-    ],
-    "RIGHT": [
-        "r0", "r1", "r2", "r3", "r4", "r5",
-        "r6", "r7", "r8"
-    ],
-    "BOTTOM": [
-        "b0", "b1", "b2", "b3", "b4", "b5",
-        "b6", "b7", "b8", "b9", "b10", "b11",
-    ],
-    "LEFT": [
-        "l0", "l1", "l2", "l3", "l4", "l5",
-        "l6", "l7", "l8"
-    ]
-}
+V_LEDS = 46
+H_LEDS = 76
 
-LOGLEVELS = ["critical", "error", "warning", "info", "debug"]
+LOGFORMAT = '%(asctime)s %(levelname)s - %(message)s'
 logging.basicConfig(
-    format='%(asctime)s %(levelname)s - %(message)s',
+    format=LOGFORMAT,
     datefmt='%m-%d %H:%M'
 )
-logger = logging.getLogger("ambiled")
+logger = logging.getLogger(__name__)
 
 
 class AmbiLED():
     """
-    Get the current screen and figure out which RGB color
-    each LED should have.
+    * Get the current screen
+    * Figure out which RGB color each LED should have
+    * Send the LED color arryas to the LED stript.
     """
-    def __init__(self, fps):
+    def __init__(self, fps, loglevel):
         """
-        Setup some constant variables as well as self.leds which holds all
-        four LED strips' color information at any given time.
+        Setup some constants.
 
         Arguments:
         fps = Specifies how many times per second the LEDs should update
+        loglevel = Specify what loglevel should be used when running ambiled
         """
-        self.tick = float(1000/fps)  # milliseconds
-        self.width = len(LEDS["TOP"])
-        self.height = len(LEDS["RIGHT"])
-        self.leds = {
-            side: [[led, None] for led in LEDS[side]] for side in LEDS.keys()
-        }
+        self.run_interval = float(1000/fps)  # milliseconds
+        self.loglevel = loglevel
 
     def get_colors_from_screen(self):
         """
-        Grab the screen, resize the image to the resolution of the LEDs
-        available (See note), figure out which led should have which RGB
-        color and update self.leds.
+        * Reset the leds color arrays
+        * Grab the screen
+        * Resize the image to the resolution of the LEDs available (See note)
+        * figure out which LED should have which RGB color and update self.leds
 
-        Note: Picking a pixel as a representation of which RGB color each LED
+        Note:
+        Picking a pixel as a representation of which RGB color each LED
         should have is naïve and will not render a true result. To get the
         desired color for each LED, we will have to interpolate a bunch of
         pixels' colors. The idea behind rezising the image is that instead of
         calculating zones for each LED and interpolating these zones to get
         the RGB color that each LED should have, we resize the screen image
         to have as many pixels vertically and horizontally as we know we have
-        LEDs and allow PIL to do the interpolation only once. Each pixel of the
-        resized image will be an interpolated color that will result in each
-        LED getting the right RGB color.
+        LEDs and allow PIL to do the interpolation only once. Each pixel of
+        the resized image will be an interpolated color that will result in
+        each LED getting the right RGB color.
         """
+        self.leds = {side: [] for side in ["top", "right", "bottom", "left"]}
+        screen_path = os.path.join("tmp", "screens", "%s.jpg" % time.clock())
         screen = ImageGrab.grab()
-        screen = screen.resize((self.width, self.height), Image.NEAREST)
-        screen = screen.filter(ImageFilter.BLUR)
-        screen = screen.load()
+        screen = screen.resize((H_LEDS, V_LEDS))
+        if self.loglevel == "debug":
+            screen.save(screen_path.replace(".jpg", "-resize.jpg"))
 
-        for side, leds in self.leds.items():
-            x_pos = y_pos = idx = 0
-            while idx < len(leds):
-                self.leds[side][idx][1] = screen[x_pos, y_pos]
-                if side in ["TOP", "BOTTOM"]:
+        screen = screen.load()
+        for side in self.leds.keys():
+            x_pos = y_pos = 0
+            limit = H_LEDS if side in ["top", "bottom"] else V_LEDS
+            while x_pos < limit and y_pos < limit:
+                self.leds[side].append(screen[x_pos, y_pos])
+                if side in ["top", "bottom"]:
                     x_pos += 1
                 else:
                     y_pos += 1
-                idx += 1
 
     def run(self):
         """
@@ -95,33 +83,37 @@ class AmbiLED():
         is raised.
         """
         try:
-            idx = 0
             while True:
-                idx += 1
                 start_time = time.clock() * 1000  # milliseconds
                 self.get_colors_from_screen()
-                logger.debug("leds: %s" % self.leds)
                 end_time = time.clock() * 1000  # milliseconds
                 run_time = (end_time-start_time)  # milliseconds
-                logger.info("Run #%s:%1.3f ms" % (idx, run_time))
-                if run_time < self.tick:
-                    logger.info("Sleep: %1.3f ms" % (self.tick-run_time))
-                    time.sleep((self.tick-run_time)/1000)
-        except (KeyboardInterrupt, SystemExit):
+                logger.info("Ran in: %1.1f ms" % run_time)
+                if run_time < self.run_interval:
+                    logger.info("Next run in: %1.1f ms" % (
+                        self.run_interval-run_time),
+                    )
+                    time.sleep((self.run_interval-run_time)/1000)
+        except KeyboardInterrupt:
+            logger.critical("Caught ctrl-c. Exiting.")
+            sys.exit(1)
+        except SystemExit:
             raise
 
 
 def __main__():
     """
-    Parse arguments, set the loglevel, instantiate and run AmbiLED.
     """
+    loglevels = ["critical", "error", "warning", "info", "debug"]
+
+    # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-l",
         "--loglevel",
         help="Set loglevel",
         default="info",
-        choices=LOGLEVELS
+        choices=loglevels
     )
     parser.add_argument(
         "-n",
@@ -133,11 +125,25 @@ def __main__():
     )
     args = parser.parse_args()
 
-    if args.loglevel in LOGLEVELS:
+    # Set loglevel
+    if args.loglevel in loglevels:
         logger.setLevel(getattr(logging, args.loglevel.upper()))
 
-    # Ok, so instantiate the ambiled class and tell it to run!
-    ambiled = AmbiLED(fps=args.fps)
+    # Do some cleaning up before running AmbiLED
+    tmp_screens = os.path.join("tmp", "screens")
+    shutil.rmtree("tmp", ignore_errors=True)
+    if args.loglevel == "debug":
+        # Create the tmp direcotry and the tmp/screens directory
+        os.makedirs(tmp_screens)
+
+        # Setup another loghandler and write the log to tmp/ambiled.log
+        handler = logging.FileHandler(os.path.join("tmp/ambiled.log"))
+        formatter = logging.Formatter(LOGFORMAT)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    # Instantiate and run AmbiLED
+    ambiled = AmbiLED(fps=args.fps, loglevel=args.loglevel)
     ambiled.run()
 
 if __name__ == __main__():
