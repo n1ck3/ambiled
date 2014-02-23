@@ -12,11 +12,10 @@ import argparse
 import time
 import logging
 import pyscreenshot as ImageGrab
+from PIL import Image
 
-V_LEDS = 2
-H_LEDS = 4
-# V_LEDS = 46
-# H_LEDS = 76
+V_LEDS = 46
+H_LEDS = 76
 
 LOGFORMAT = '%(asctime)s %(levelname)s - %(message)s'
 logging.basicConfig(
@@ -33,8 +32,35 @@ class NoSerialDeviceFound(Exception):
 
 
 class FakeSerialDevice():
+    def _save_led_strip(self, string):
+        """
+        Save an image of the LED strip for acceptance testing.
+
+        Takes string of HEX (usually sent to LED strip) and saves an image of
+        the colors of the LED strip.
+        """
+        rgb_list = self._hex_string_to_rgb_list(string)
+        rgb_list.reverse()
+        led_strip = Image.new("RGB", (len(rgb_list), 1))
+        led_strip.putdata(rgb_list)
+        led_strip.save(os.path.join("tmp", "leds.jpg"))
+
+    def _hex_string_to_rgb_list(self, string):
+        """
+        Make an RGB list from a string of HEX colors
+        """
+        n = 6
+        hex_list = [string[i:i+n] for i in range(0, len(string), n)][:-1]
+        rgb_list = [(
+            int(hex_color[2:4], 16),  # R
+            int(hex_color[0:2], 16),  # G
+            int(hex_color[4:5], 16)  # B
+        ) for hex_color in hex_list]
+        return rgb_list
+
     def write(self, string):
         logger.info("Writing to fake serial device: %s" % string)
+        self._save_led_strip(string)
 
 
 class AmbiLED():
@@ -57,6 +83,14 @@ class AmbiLED():
         serial_devs = glob.glob('/dev/tty.usbmodem*')
         serial_dev = None if len(serial_devs) == 0 else serial_devs[0]
 
+        # Build a dict of all the coordinates we want to sample later on.
+        self.led_positions = {
+            "left": [(0, y) for y in range(0, V_LEDS)],
+            "top": [(x, V_LEDS-1) for x in range(0, H_LEDS)],
+            "right": [(H_LEDS-1, y) for y in range(V_LEDS-1, -1, -1)],
+            "bottom": [(x, 0) for x in range(H_LEDS-1, -1, -1)]
+        }
+
         if not serial_dev:
             if loglevel == "debug":
                 logger.warning("No serial device found. Using fake.")
@@ -66,6 +100,13 @@ class AmbiLED():
         else:
             lpspeed = 115200
             self.serial_dev = serial.Serial(serial_dev, lpspeed, timeout=0)
+
+    def _rgb_list_to_hex_string(self, rgb_list):
+        """
+        Takes a list of RGB values and returns a string of HRX GRB values
+        """
+        hex_list = ["%02x%02x%02x" % (x[1], x[0], x[2]) for x in rgb_list]
+        return "%s\n" % "".join(hex_list)
 
     def get_colors_from_screen(self):
         """
@@ -87,41 +128,43 @@ class AmbiLED():
         the resized image will be an interpolated color that will result in
         each LED getting the right HEX RGB color.
         """
-        # self.leds = {side: [] for side in ["top", "right", "bottom", "left"]}
-        self.leds = {side: [] for side in ["top"]}
-        screen_path = os.path.join("tmp", "screens", "%s.jpg" % time.clock())
+        self.leds = {side: [] for side in ["top", "right", "bottom", "left"]}
         screen = ImageGrab.grab()
         screen = screen.resize((H_LEDS, V_LEDS))
         if self.loglevel == "debug":
-            screen.save(screen_path.replace(".jpg", "-resize.jpg"))
+            screen.save(os.path.join("tmp", "screen.jpg"))
 
-        screen = screen.load()
         for side in self.leds.keys():
-            x_pos = y_pos = 0
-            limit = H_LEDS if side in ["top", "bottom"] else V_LEDS
-            while x_pos < limit and y_pos < limit:
-                rgb = screen[x_pos, y_pos]
-
-                # The LEDs need the colors as HEX GRB. WTF?
-                self.leds[side].append("%02x%02x%02x" % (
-                    rgb[1], rgb[0], rgb[2])
-                )
-
-                if side in ["top", "bottom"]:
-                    x_pos += 1
-                else:
-                    y_pos += 1
-
-            # Reverse list of LED colors so that we send them in reverse order
-            # to the strips.
+            for coordinate in self.led_positions[side]:
+                rgb = screen.getpixel(coordinate)
+                self.leds[side].append(rgb)
             self.leds[side].reverse()
 
     def update_led_strips(self):
         """
         Sends the color arrays to the LED strips.
-        """
 
-        hex_string = "".join(self.leds["top"])
+        Assumes that the strips start at X=0, Y=0 (viewed from the front of
+        TV), and runs clockwise (also viewed from the front of the TV).
+        """
+        # TODO: Understand this.
+        # ordered_leds = \
+        #     self.leds["left"] + \
+        #     self.leds["top"] +  \
+        #     self.leds["right"] + \
+        #     self.leds["bottom"]
+
+        ordered_leds = \
+            self.leds["left"] + \
+            self.leds["bottom"] +  \
+            self.leds["right"] + \
+            self.leds["top"]
+
+        # LED strips wants the colors on the wrong order, the first color goes
+        # to the LED at the end.
+        ordered_leds.reverse()
+
+        hex_string = self._rgb_list_to_hex_string(ordered_leds)
         self.serial_dev.write(hex_string)
 
     def run(self):
@@ -153,8 +196,6 @@ class AmbiLED():
 
 
 def __main__():
-    """
-    """
     loglevels = ["critical", "error", "warning", "info", "debug"]
 
     # Parse arguments
@@ -181,11 +222,10 @@ def __main__():
         logger.setLevel(getattr(logging, args.loglevel.upper()))
 
     # Do some cleaning up before running AmbiLED
-    tmp_screens = os.path.join("tmp", "screens")
     shutil.rmtree("tmp", ignore_errors=True)
     if args.loglevel == "debug":
-        # Create the tmp direcotry and the tmp/screens directory
-        os.makedirs(tmp_screens)
+        # Create the tmp directory
+        os.makedirs("tmp")
 
         # Setup another loghandler and write the log to tmp/ambiled.log
         handler = logging.FileHandler(os.path.join("tmp/ambiled.log"))
